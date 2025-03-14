@@ -4,4 +4,3 @@ pandas
 numpy
 matplotlib
 scipy
-time
