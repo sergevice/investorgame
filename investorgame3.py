@@ -394,8 +394,8 @@ def main():
         for asset in assets.keys():
             if st.button(f"Все в {asset}", key=f"btn_{asset}"):
                 for reset_asset in assets.keys():
-                    st.session_state["investment"][reset_asset] = 0
-                st.session_state["investment"][asset] = 100
+                    st.session_state["investment"][reset_asset] = 0.0
+                st.session_state["investment"][asset] = 100.0
                 st.rerun()
     
     total_percentage = 0
