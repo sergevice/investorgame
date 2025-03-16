@@ -5,6 +5,11 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from scipy.optimize import minimize
 import numpy as np
+import gspread
+import logging
+import json
+import base64
+from oauth2client.service_account import ServiceAccountCredentials
 
 def get_asset_tickers():
     return {
@@ -129,9 +134,6 @@ def Markowitz_optimised_portfolio(df_prices, risk_free_rate=0.02):
         "% вкладення": optimized_weights  # Convert to percentage
     })
 
-    # Format percentage values to 2 decimal places
-    '''df_optimized["% вкладення"] = df_optimized["% вкладення"].apply(lambda x: f"{x:.2f}%")'''
-
     return df_optimized
 
 
@@ -162,6 +164,201 @@ def calculate_yield(df_yield, df_investment, total_investment):
     # Вибираємо потрібні колонки та повертаємо результат
     return df_result[["Тікер", "Вкладено", "Вартість на сьогодні", "Дохід"]]
 
+def show_yield_histogram(df_yield):
+    """
+    Displays a histogram comparing asset returns in a Streamlit app.
+
+    Parameters:
+        df_yield (pd.DataFrame): DataFrame with columns "Тікер" (ticker) and "Дохідність" (return).
+
+    Returns:
+        None (renders the histogram in Streamlit).
+    """
+    if df_yield.empty:
+        st.warning("⚠️ DataFrame is empty. Please provide valid data.")
+        return
+
+    # Extract tickers and yield values
+    tickers = df_yield.index
+    yields = df_yield["Доходність"]
+
+    # Plot histogram
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(tickers, yields, color=['green' if y >= 0 else 'red' for y in yields], alpha=0.75)
+
+    # Formatting
+    ax.set_xlabel("Тікер", fontsize=12)
+    ax.set_ylabel("Дохідність", fontsize=12)
+    ax.set_title("Порівняння дохідностей активів", fontsize=14)
+    ax.set_xticklabels(tickers, rotation=45, ha="right")
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+    # Show the plot in Streamlit
+    st.pyplot(fig)
+
+def analyze_multiple_portfolios(portfolios: dict, a_date_prices: pd.DataFrame, b_date_prices: pd.DataFrame, total_investment: float):
+    """
+    Analyzes multiple portfolios and returns a combined DataFrame with performance results.
+
+    Parameters:
+        portfolios (dict): Dictionary of portfolio DataFrames with structure {'Portfolio Name': df_structure}
+        a_date_prices (pd.DataFrame): Historical prices on the start date.
+        b_date_prices (pd.DataFrame): Historical prices on the end date.
+        total_investment (float): The total amount invested at the start.
+
+    Returns:
+        pd.DataFrame: Combined results with portfolio performance, indexed by portfolio names.
+    """
+
+    results = []
+
+    for portfolio_name, df_portfolio in portfolios.items():
+        # Compute performance for this portfolio
+        df_result = calculate_portfolio_performance(df_portfolio, a_date_prices, b_date_prices, total_investment)
+        
+        # Add portfolio name as index
+        df_result.index = [portfolio_name]
+        
+        # Append result to list
+        results.append(df_result)
+
+    # Combine all results into a single DataFrame
+    df_combined = pd.concat(results)
+
+    return df_combined
+
+def calculate_portfolio_performance(df_portfolio, a_date_prices, b_date_prices, total_investment):
+    """
+    Calculates the return and final value of a portfolio based on asset prices on two dates.
+
+    Parameters:
+        df_portfolio (pd.DataFrame): DataFrame with "Тікер" (tickers) and "% вкладення" (weights).
+        a_date_prices (pd.DataFrame): DataFrame with asset prices on the start date (index should be one date).
+        b_date_prices (pd.DataFrame): DataFrame with asset prices on the end date (index should be one date).
+        total_investment (float): The total amount invested at the start.
+
+    Returns:
+        pd.DataFrame: DataFrame with columns "Дохідність портфеля", "Вартість портфеля".
+    """
+    
+    # Ensure tickers in portfolio exist in price data
+    tickers = df_portfolio["Тікер"].values
+    valid_tickers = [ticker for ticker in tickers if ticker in a_date_prices.columns and ticker in b_date_prices.columns]
+    
+    if not valid_tickers:
+        raise ValueError("⚠️ No valid tickers found in price data.")
+
+    # Extract prices for selected tickers
+    initial_prices = a_date_prices[valid_tickers].iloc[0]  # Prices at date A
+    final_prices = b_date_prices[valid_tickers].iloc[0]    # Prices at date B
+
+    # Calculate return for each asset
+    returns = final_prices / initial_prices  # Return factor (e.g., 1.05 means +5%)
+
+    # Calculate each asset's contribution to portfolio value
+    df_portfolio = df_portfolio.set_index("Тікер")  # Ensure index is tickers
+    df_portfolio = df_portfolio.loc[valid_tickers]  # Keep only valid tickers
+
+    df_portfolio["Дохідність активу"] = returns
+    df_portfolio["Вартість активу"] = total_investment * df_portfolio["% вкладення"] * df_portfolio["Дохідність активу"]
+
+    # Calculate total portfolio value and return
+    portfolio_value = df_portfolio["Вартість активу"].sum()
+    portfolio_return = portfolio_value / total_investment - 1  # Convert to percentage return
+
+    # Create output DataFrame
+    df_result = pd.DataFrame({
+        "Дохідність портфеля": [portfolio_return],
+        "Вартість портфеля": [portfolio_value]
+    })
+
+    return df_result
+
+def plot_portfolio_asset_distribution_streamlit(portfolios):
+    """
+    Displays a grouped bar chart in Streamlit showing asset allocations in different portfolios.
+
+    Parameters:
+        portfolios (dict): Dictionary where keys are portfolio names and values are DataFrames 
+                          with columns "Тікер" (ticker) and "% вкладення" (allocation as fractions).
+
+    Returns:
+        None (renders the histogram in Streamlit).
+    """
+    if not portfolios:
+        st.warning("⚠️ No portfolios provided.")
+        return
+
+    # Extract all unique tickers from all portfolios
+    unique_tickers = sorted(set(ticker for df in portfolios.values() for ticker in df["Тікер"]))
+
+    # Number of assets and portfolios
+    num_assets = len(unique_tickers)
+    num_portfolios = len(portfolios)
+
+    # Set width of bars
+    bar_width = 0.8 / num_portfolios  # Adjust for better spacing
+
+    # X-axis positions for tickers
+    x_positions = np.arange(num_assets)
+
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Loop through each portfolio and plot its allocations
+    for i, (portfolio_name, df_portfolio) in enumerate(portfolios.items()):
+        # Get allocation for each asset (set 0 if asset is not in portfolio)
+        asset_allocations = [df_portfolio.set_index("Тікер")["% вкладення"].get(ticker, 0) for ticker in unique_tickers]
+
+        # Shift bars for different portfolios
+        ax.bar(x_positions + i * bar_width, asset_allocations, width=bar_width, label=portfolio_name, alpha=0.75)
+
+    # Formatting
+    ax.set_xlabel("Активи", fontsize=12)
+    ax.set_ylabel("Частка у портфелі", fontsize=12)
+    ax.set_title("Розподіл активів у портфелях", fontsize=14)
+    ax.set_xticks(x_positions + bar_width * (num_portfolios - 1) / 2)  # Centering labels
+    ax.set_xticklabels(unique_tickers, rotation=45, ha="right")
+    ax.legend(title="Портфелі")
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+    # Show the plot in Streamlit
+    st.subheader("Давай порівняємо твій портфель з портфелями зібраними різними ШІ та алгортимами оптимізації")
+    st.pyplot(fig)
+
+def analyze_player_performance_with_leaderboard(df_performance):
+    """
+    Analyzes the ranking of the player's portfolio, displays a leaderboard, and shows a message in Streamlit.
+
+    Parameters:
+        df_performance (pd.DataFrame): DataFrame with index as portfolio names and 
+                                       "Дохідність портфеля" (portfolio return) as a column.
+
+    Returns:
+        None (renders leaderboard and message in Streamlit).
+    """
+    if df_performance.empty or "Дохідність портфеля" not in df_performance.columns:
+        st.warning("⚠️ Немає даних для аналізу портфелів.")
+        return
+
+    # Sort portfolios by return in descending order
+    df_sorted = df_performance.sort_values(by="Дохідність портфеля", ascending=False)
+
+    # Display leaderboard
+    st.subheader("🏆 Таблиця лідерів портфелів")
+    st.dataframe(df_sorted.style.format({"Дохідність портфеля": "{:.2%}"}))
+
+    # Check player's position
+    if "Гравець" in df_sorted.index:
+        player_rank = df_sorted.index.get_loc("Гравець")
+
+        if player_rank == 0:
+            st.success("🎉 Вау! В тебе талант до інвестицій! Вступай на кафедру економіки та економічної кібернетики аби в повній мірі розвинути свої здібності!")
+        elif player_rank == len(df_sorted) - 1:
+            st.error("📉 Хочеш покращити свої прибутки? Вступай на кафедру економіки та економічної кібернетики і дізнайся як використовувати сучасні моделі для створення оптимальних портфелів!")
+        else:
+            st.info("📈 Непогано, але є куди зростати! Вступай на кафедру економіки та економічної кібернетики і дізнайся як використовувати сучасні моделі для створення оптимальних портфелів!")
+
 
 def main():
     st.title("Інтерактивна інвестиційна гра")
@@ -178,7 +375,6 @@ def main():
     historic_assets_prices = get_stock_data(assets)
     st.write("Ціни закриття за останній рік:")
     plot_price_dynamics(historic_assets_prices, 0)
-    st.dataframe(historic_assets_prices)
     
     st.write("Тепер розподіліть 10 тис. грн у відсотках між запропонованими активами і зберіть Ваш перший інвестиційний портфель!")
 
@@ -187,7 +383,7 @@ def main():
     st.write("Виберіть, скільки відсотків вашого портфеля вкладати в кожен актив.")
     
     
-    total_investment = st.number_input("Сума до інвестування (ГРН)", min_value=0.0, value=1000.0, step=100.0)
+    total_investment = st.number_input("Сума до інвестування (ГРН)", min_value=0.0, value=10000.0, step=1000.0)
     
     if "investment" not in st.session_state:
         st.session_state["investment"] = {asset: 100 / len(assets) for asset in assets}
@@ -206,7 +402,7 @@ def main():
     with col1:
         for asset in assets.keys():
             st.session_state["investment"][asset] = st.slider(
-                f"% вкласти у {asset}", 0.0, 100.0, st.session_state["investment"][asset], key=f"slider_{asset}"
+                f"% вкласти у {asset}", 0.0, 100.0, st.session_state["investment"][asset], 1.0, key=f"slider_{asset}"
             )
             total_percentage += st.session_state["investment"][asset]
     
@@ -219,20 +415,43 @@ def main():
             "Актив": list(assets.keys()),
             "% вкладення": [st.session_state["investment"][asset] / 100 for asset in assets.keys()]
         })
-        st.dataframe(user_portfolio)
+        st.dataframe(user_portfolio.style.format({"% вкладення": "{:.2%}"}))
         
         if st.button("Інвестувати"):
             st.success("Інвестиція розподілена успішно!")
             plot_price_dynamics(historic_assets_prices, 1)
             df_yield = calculate_returns(historic_assets_prices)
-            st.dataframe(df_yield)
+            show_yield_histogram(df_yield)
             user_yield = calculate_yield(df_yield, user_portfolio, total_investment)
+            st.subheader("Ось як себе показав твій портфель")
             st.dataframe(user_yield)
             df_train_historic_prices = historic_assets_prices.iloc[:len(historic_assets_prices) // 2]
             markowitz_portfolio = Markowitz_optimised_portfolio(df_train_historic_prices)
             markowitz_yield = calculate_yield(df_yield, markowitz_portfolio, total_investment)
-            st.dataframe(markowitz_portfolio)
-            st.dataframe(markowitz_yield)
+
+            df_grok_portfolio = pd.read_csv("grok3_portfolio.csv")
+            df_forecasted_sharpe_portfolio = pd.read_csv("markowitz_portfolio_forecasted.csv")
+
+            portfolios = {
+                "ШІ Grok": df_grok_portfolio,
+                "Гравець": user_portfolio,
+                "ШІ NeuralProphet і Марковіц": df_forecasted_sharpe_portfolio,
+                "Марковіц": markowitz_portfolio
+            }
+
+
+            a_date_prices = df_train_historic_prices.iloc[-1:]
+            b_date_prices = historic_assets_prices.iloc[-1:]
+    
+            df_portfolios_comparison = analyze_multiple_portfolios(portfolios, a_date_prices, b_date_prices, total_investment)
+            
+            plot_portfolio_asset_distribution_streamlit(portfolios)
+            analyze_player_performance_with_leaderboard(df_portfolios_comparison)
+
+            st.subheader("Давай знайомитися! Залишай заявку, аби отримувати актуальну інформацію!")
+
+            # Додати кнопку для переходу до анкети
+            st.page_link("pages/1_Анкета.py", label="Заповнити анкету", icon="📝")    
 
 
 if __name__ == "__main__":
