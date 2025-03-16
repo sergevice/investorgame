@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-import scipy.optimize as sco
+from scipy.optimize import minimize
 import numpy as np
 
 def get_asset_tickers():
@@ -55,97 +55,85 @@ def calculate_returns(df):
     returns = (df.iloc[-1] - df.iloc[midpoint]) / df.iloc[midpoint]
     return returns.to_frame(name="Доходність")
 
-def calculate_markowitz_portfolio_old(df_prices):
+def compute_sharpe_ratio(df_structure, df_prices, risk_free_rate):
     """
-    Обчислює оптимальний портфель за Марковіцем.
+    Calculate the Sharpe ratio of a portfolio.
     
-    Параметри:
-        df_prices (pd.DataFrame): DataFrame, де колонки - активи, рядки - історичні ціни.
+    Parameters:
+        df_structure (pd.DataFrame): DataFrame with columns ["Тікер", "% вкладення"]
+        df_prices (pd.DataFrame): DataFrame where index is dates, columns are tickers, and values are prices
+        risk_free_rate (float): Annualized risk-free rate (default: 2%)
     
-    Повертає:
-        pd.DataFrame: df_investments з оптимальним розподілом портфеля.
+    Returns:
+        float: Sharpe ratio of the portfolio
     """
-    returns = df_prices.pct_change().dropna()  # Обчислюємо щоденні дохідності
-    mean_returns = returns.mean()  # Середня дохідність активів
-    cov_matrix = returns.cov()  # Матриця коваріацій
-    num_assets = len(df_prices.columns)
     
-    # Функція для мінімізації ризику (волатильності портфеля)
-    def portfolio_volatility(weights):
-        return np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    # Convert allocation percentages to weights (ensure sum = 1)
+    df_structure = df_structure.copy()
+    df_structure["% вкладення"] /= 100  # Convert from percent to decimal
     
-    # Обмеження: сума ваг активів = 1
-    constraints = ({'type': 'eq', 'fun': lambda weights: np.sum(weights) - 1})
+    # Filter df_prices to include only assets in the portfolio
+    tickers = df_structure["Тікер"].values
+    df_prices = df_prices[tickers]
     
-    # Межі ваг активів (0-100%)
-    bounds = tuple((0, 1) for _ in range(num_assets))
+    # Compute daily returns
+    df_returns = df_prices.pct_change().dropna()
     
-    # Початкові ваги (рівномірно розподілені)
-    initial_weights = np.array(num_assets * [1.0 / num_assets])
-    
-    # Оптимізація для знаходження мінімальної волатильності
-    result = sco.minimize(portfolio_volatility, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
-    
-    if not result.success:
-        raise ValueError("Оптимізація не зійшлася. Спробуйте змінити вхідні дані.")
-    
-    optimal_weights = result.x
-    
-    # Формуємо df_investments
-    df_investments = pd.DataFrame({
-        "Тікер": df_prices.columns,
-        "% вкладення": optimal_weights * 100
-    })
-    
-    return df_investments
+    # Compute portfolio return: weighted sum of asset returns
+    weights = df_structure.set_index("Тікер")["% вкладення"].reindex(df_returns.columns).values
+    portfolio_returns = df_returns @ weights  # Matrix multiplication
 
-def calculate_markowitz_portfolio(historic_asset_prices):
+    # Compute portfolio statistics
+    mean_return = portfolio_returns.mean() * 252  # Annualized return
+    std_dev = portfolio_returns.std() * np.sqrt(252)  # Annualized volatility
+
+    # Compute Sharpe Ratio
+    sharpe_ratio = (mean_return - risk_free_rate) / std_dev
+
+    return sharpe_ratio
+
+def Markowitz_optimised_portfolio(df_prices, risk_free_rate=0.02):
     """
-    Обчислює оптимальний портфель за методом Марковіца, максимізуючи Sharpe Ratio.
-    
-    Параметри:
-        historic_asset_prices (pd.DataFrame): Датафрейм, де рядки - дні, колонки - тікери активів.
-    
-    Повертає:
-        pd.DataFrame: Датафрейм із колонками "Тікер" та "% вкладення" (оптимальні ваги).
+    Optimizes portfolio allocation using Markowitz mean-variance optimization 
+    to maximize the Sharpe ratio and returns a readable DataFrame.
     """
-    # Обчислення щоденної дохідності
-    returns = historic_asset_prices.pct_change().dropna()
-    mean_returns = returns.mean()
-    cov_matrix = returns.cov()
-    num_assets = len(historic_asset_prices.columns)
     
-    # Функція для мінімізації (від'ємне Sharpe Ratio)
-    def neg_sharpe_ratio(weights, mean_returns, cov_matrix, risk_free_rate=0.02):
-        portfolio_return = np.dot(weights, mean_returns)
-        portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-        return -(portfolio_return - risk_free_rate) / portfolio_volatility
+    # Compute daily returns
+    df_returns = df_prices.pct_change().dropna()
+    num_assets = df_returns.shape[1]
     
-    # Обмеження: сума ваг активів = 1
-    constraints = ({'type': 'eq', 'fun': lambda weights: np.sum(weights) - 1})
+    # Initial equal-weight allocation
+    initial_weights = np.ones(num_assets) / num_assets
+    tickers = df_prices.columns
+
+    # Function to minimize (negative Sharpe ratio)
+    def negative_sharpe(weights):
+        df_structure = pd.DataFrame({"Тікер": tickers, "% вкладення": weights * 100})
+        return -compute_sharpe_ratio(df_structure, df_prices, risk_free_rate)
+
+    # Constraints: sum of weights must be 1
+    constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1})
     
-    # Межі ваг активів (0-100%)
-    bounds = tuple((0, 1) for _ in range(num_assets))
-    
-    # Початкові ваги (рівномірний розподіл)
-    initial_weights = np.array(num_assets * [1.0 / num_assets])
-    
-    # Оптимізація для максимізації Sharpe Ratio
-    result = sco.minimize(neg_sharpe_ratio, initial_weights, args=(mean_returns, cov_matrix), 
-                          method='SLSQP', bounds=bounds, constraints=constraints)
-    
-    if not result.success:
-        raise ValueError("Оптимізація не зійшлася. Спробуйте змінити вхідні дані.")
-    
-    optimal_weights = result.x
-    
-    # Формуємо датафрейм із результатами
-    df_investments = pd.DataFrame({
-        "Тікер": historic_asset_prices.columns,
-        "% вкладення": optimal_weights  # Перетворення в %
+    # Bounds: each weight between 0 and 1 (no short selling)
+    bounds = [(0, 1) for _ in range(num_assets)]
+
+    # Optimization
+    result = minimize(negative_sharpe, initial_weights, method='SLSQP', bounds=bounds, constraints=constraints)
+
+    # Extract optimized weights
+    optimized_weights = result.x
+
+    # Create portfolio structure DataFrame
+    df_optimized = pd.DataFrame({
+        "Тікер": tickers,
+        "% вкладення": optimized_weights  # Convert to percentage
     })
-    
-    return df_investments
+
+    # Format percentage values to 2 decimal places
+    '''df_optimized["% вкладення"] = df_optimized["% вкладення"].apply(lambda x: f"{x:.2f}%")'''
+
+    return df_optimized
+
 
 def calculate_yield(df_yield, df_investment, total_investment):
     """
@@ -202,7 +190,7 @@ def main():
     total_investment = st.number_input("Сума до інвестування (ГРН)", min_value=0.0, value=1000.0, step=100.0)
     
     if "investment" not in st.session_state:
-        st.session_state["investment"] = {asset: 0 for asset in assets.keys()}
+        st.session_state["investment"] = {asset: 100 / len(assets) for asset in assets}
     
     col1, col2 = st.columns([2, 1])
     
@@ -218,7 +206,7 @@ def main():
     with col1:
         for asset in assets.keys():
             st.session_state["investment"][asset] = st.slider(
-                f"% вкласти у {asset}", 0, 100, st.session_state["investment"][asset], key=f"slider_{asset}"
+                f"% вкласти у {asset}", 0.0, 100.0, st.session_state["investment"][asset], key=f"slider_{asset}"
             )
             total_percentage += st.session_state["investment"][asset]
     
@@ -241,8 +229,9 @@ def main():
             user_yield = calculate_yield(df_yield, user_portfolio, total_investment)
             st.dataframe(user_yield)
             df_train_historic_prices = historic_assets_prices.iloc[:len(historic_assets_prices) // 2]
-            markowitz_portfolio = calculate_markowitz_portfolio(df_train_historic_prices)
+            markowitz_portfolio = Markowitz_optimised_portfolio(df_train_historic_prices)
             markowitz_yield = calculate_yield(df_yield, markowitz_portfolio, total_investment)
+            st.dataframe(markowitz_portfolio)
             st.dataframe(markowitz_yield)
 
 
