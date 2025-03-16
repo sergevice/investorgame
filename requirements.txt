@@ -6,5 +6,4 @@ matplotlib
 scipy
 gspread
 logging
-base64
 oauth2client.service_account
