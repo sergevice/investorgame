@@ -2,14 +2,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
 from scipy.optimize import minimize
 import numpy as np
-import gspread
-import logging
-import json
-import base64
-from oauth2client.service_account import ServiceAccountCredentials
 
 def get_asset_tickers():
     return {
@@ -55,9 +49,8 @@ def plot_price_dynamics(df, show):
     plt.tight_layout()
     st.pyplot(fig)
 
-def calculate_returns(df):
-    midpoint = len(df) // 2
-    returns = (df.iloc[-1] - df.iloc[midpoint]) / df.iloc[midpoint]
+def calculate_returns(a_date_prices,b_date_prices):
+    returns = (b_date_prices.iloc[0] - a_date_prices.iloc[0]) / a_date_prices.iloc[0]
     return returns.to_frame(name="Доходність")
 
 def compute_sharpe_ratio(df_structure, df_prices, risk_free_rate):
@@ -359,6 +352,25 @@ def analyze_player_performance_with_leaderboard(df_performance):
         else:
             st.info("📈 Непогано, але є куди зростати! Вступай на кафедру економіки та економічної кібернетики і дізнайся як використовувати сучасні моделі для створення оптимальних портфелів!")
 
+def show_dataframe_with_total(df):
+    # Клонуємо датафрейм, щоб залишити оригінальний незмінним
+    df_copy = df.copy()
+
+    # Визначаємо всі числові колонки
+    numeric_cols = df_copy.select_dtypes(include=['number']).columns
+
+    # Створюємо рядок "Всього" із сумами для числових колонок
+    total_row = {col: df_copy[col].sum() for col in numeric_cols}
+    total_row["Тікер"] = "Всього"
+
+    # Додаємо цей рядок до датафрейму
+    df_copy = pd.concat([df_copy, pd.DataFrame([total_row])], ignore_index=True)
+
+    # Форматуємо числові значення
+    format_dict = {col: "{:,.2f}" for col in numeric_cols}  # Двома знаками після коми
+
+    # Відображаємо у Streamlit
+    st.dataframe(df_copy.style.format(format_dict))
 
 def main():
     st.title("Інтерактивна інвестиційна гра")
@@ -407,25 +419,31 @@ def main():
             total_percentage += st.session_state["investment"][asset]
     
     if total_percentage != 100:
-        st.warning("Сума всіх відсотків має дорівнювати 100%!")
+        st.warning(f"Поточна сума відстоків: {total_percentage}%. Сума всіх відсотків має дорівнювати 100%!")
     else:
         st.write("### Підсумковий розподіл інвестицій")
         user_portfolio = pd.DataFrame({
             "Тікер": list(assets.values()),
             "Актив": list(assets.keys()),
+            "Сума": [st.session_state["investment"][asset] / 100 * total_investment for asset in assets.keys()],
             "% вкладення": [st.session_state["investment"][asset] / 100 for asset in assets.keys()]
         })
-        st.dataframe(user_portfolio.style.format({"% вкладення": "{:.2%}"}))
+        show_dataframe_with_total(user_portfolio)
         
         if st.button("Інвестувати"):
             st.success("Інвестиція розподілена успішно!")
             plot_price_dynamics(historic_assets_prices, 1)
-            df_yield = calculate_returns(historic_assets_prices)
+
+            df_train_historic_prices = historic_assets_prices.iloc[:len(historic_assets_prices) // 2]
+            a_date_prices = df_train_historic_prices.iloc[-1:]
+            b_date_prices = historic_assets_prices.iloc[-1:]
+
+            df_yield = calculate_returns(a_date_prices, b_date_prices)
             show_yield_histogram(df_yield)
             user_yield = calculate_yield(df_yield, user_portfolio, total_investment)
             st.subheader("Ось як себе показав твій портфель")
-            st.dataframe(user_yield)
-            df_train_historic_prices = historic_assets_prices.iloc[:len(historic_assets_prices) // 2]
+            show_dataframe_with_total(user_yield)
+            
             markowitz_portfolio = Markowitz_optimised_portfolio(df_train_historic_prices)
             markowitz_yield = calculate_yield(df_yield, markowitz_portfolio, total_investment)
 
@@ -440,8 +458,7 @@ def main():
             }
 
 
-            a_date_prices = df_train_historic_prices.iloc[-1:]
-            b_date_prices = historic_assets_prices.iloc[-1:]
+            
     
             df_portfolios_comparison = analyze_multiple_portfolios(portfolios, a_date_prices, b_date_prices, total_investment)
             
