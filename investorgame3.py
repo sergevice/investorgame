@@ -369,7 +369,7 @@ def plot_portfolio_asset_distribution_streamlit(portfolios):
     st.subheader("Давай порівняємо твій портфель з портфелями зібраними різними ШІ та алгортимами оптимізації")
     st.pyplot(fig)
 
-def analyze_player_performance_with_leaderboard(df_performance):
+def analyze_player_performance_with_leaderboard(df_performance, name):
     """
     Analyzes the ranking of the player's portfolio, displays a leaderboard, and shows a message in Streamlit.
 
@@ -392,8 +392,8 @@ def analyze_player_performance_with_leaderboard(df_performance):
     st.dataframe(df_sorted.style.format({"Дохідність портфеля": "{:.2%}"}))
 
     # Check player's position
-    if "Гравець" in df_sorted.index:
-        player_rank = df_sorted.index.get_loc("Гравець")
+    if name in df_sorted.index:
+        player_rank = df_sorted.index.get_loc(name)
 
         if player_rank == 0:
             st.success("🎉 Вау! В тебе талант до інвестицій! Вступай на кафедру економіки та економічної кібернетики аби в повній мірі розвинути свої здібності!")
@@ -544,7 +544,7 @@ def main():
 
             portfolios = {
                 "ШІ Grok": df_grok_portfolio,
-                "Гравець": user_portfolio,
+                name: user_portfolio,
                 "ШІ NeuralProphet і Марковіц": df_forecasted_sharpe_portfolio,
                 "Марковіц": markowitz_portfolio
             }
@@ -555,7 +555,7 @@ def main():
             df_portfolios_comparison = analyze_multiple_portfolios(portfolios, a_date_prices, b_date_prices, total_investment)
             
             plot_portfolio_asset_distribution_streamlit(portfolios)
-            analyze_player_performance_with_leaderboard(df_portfolios_comparison)
+            analyze_player_performance_with_leaderboard(df_portfolios_comparison, name)
  
 
 
