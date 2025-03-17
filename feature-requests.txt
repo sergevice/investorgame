@@ -1,0 +1,3 @@
+US1  As a User, I want to see other players' results in leaderboard so that I can compare myself against other players and feel competition
+FR1 Save players portfolio into gsheets
+FR2 Retrieve and add to portfolios portfolios from gsheets
