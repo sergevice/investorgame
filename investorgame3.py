@@ -481,4 +481,64 @@ def main():
             "Тікер": list(assets.values()),
             "Актив": list(assets.keys()),
             "Сума": [st.session_state["investment"][asset] / 100 * total_investment for asset in assets.keys()],
+            "% вкладення": [st.session_state["investment"][asset] / 100 for asset in assets.keys()]
+        })
+        show_dataframe_with_total(user_portfolio)
+
+        st.subheader("Для того, аби побачити результати, заповни коротку форму:")
+
+        # Використання session_state для збереження введених даних між оновленнями
+        if "name" not in st.session_state:
+            st.session_state["name"] = ""
+        if "phone" not in st.session_state:
+            st.session_state["phone"] = ""
+
+        name = st.text_input("Імʼя",  key="name")
+        phone = st.text_input("Телефон",  key="phone")
         
+        if st.button("Інвестувати"):
+
+            if name.strip() and phone.strip():
+                send_to_google_sheets(name, phone)
+            else:
+                st.warning("Будь ласка, заповніть усі поля.")
+                st.stop()
+
+            st.success("Інвестиція розподілена успішно!")
+            plot_price_dynamics(historic_assets_prices, 1)
+
+            df_train_historic_prices = historic_assets_prices.iloc[:len(historic_assets_prices) // 2]
+            a_date_prices = df_train_historic_prices.iloc[-1:]
+            b_date_prices = historic_assets_prices.iloc[-1:]
+
+            df_yield = calculate_returns(a_date_prices, b_date_prices)
+            show_yield_histogram(df_yield)
+            user_yield = calculate_yield(df_yield, user_portfolio, total_investment)
+            st.subheader("Ось як себе показав твій портфель")
+            show_dataframe_with_total(user_yield)
+            
+            markowitz_portfolio = Markowitz_optimised_portfolio(df_train_historic_prices)
+            markowitz_yield = calculate_yield(df_yield, markowitz_portfolio, total_investment)
+
+            df_grok_portfolio = pd.read_csv("grok3_portfolio.csv")
+            df_forecasted_sharpe_portfolio = pd.read_csv("markowitz_portfolio_forecasted.csv")
+
+            portfolios = {
+                "ШІ Grok": df_grok_portfolio,
+                "Гравець": user_portfolio,
+                "ШІ NeuralProphet і Марковіц": df_forecasted_sharpe_portfolio,
+                "Марковіц": markowitz_portfolio
+            }
+
+
+            
+    
+            df_portfolios_comparison = analyze_multiple_portfolios(portfolios, a_date_prices, b_date_prices, total_investment)
+            
+            plot_portfolio_asset_distribution_streamlit(portfolios)
+            analyze_player_performance_with_leaderboard(df_portfolios_comparison)
+ 
+
+
+if __name__ == "__main__":
+    main()
