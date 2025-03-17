@@ -4,6 +4,55 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 import numpy as np
+import gspread
+import logging
+import json
+import base64
+from oauth2client.service_account import ServiceAccountCredentials
+
+# Налаштування логування
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def get_google_credentials():
+    """Load Google Sheets credentials from a local file or Streamlit secrets."""
+    try:
+        # Try loading from local file first
+        with open("service_account.json", "r") as f:
+            credentials_dict = json.load(f)
+            logging.info("✅ Завантажено Google Credentials з локального файлу.")
+    except FileNotFoundError:
+        try:
+            # If file not found, try loading from Streamlit secrets
+            encoded_creds = st.secrets["GOOGLE_CREDENTIALS"]
+            creds_json = base64.b64decode(encoded_creds).decode("utf-8")
+            credentials_dict = json.loads(creds_json)
+            logging.info("✅ Завантажено Google Credentials з Streamlit secrets.")
+        except Exception as e:
+            logging.error(f"❌ Помилка завантаження Google Credentials: {e}")
+            st.error("Помилка при завантаженні Google Credentials. Перевірте секрети Streamlit або наявність локального файлу.")
+            return None
+    
+    return ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict)
+
+def send_to_google_sheets(name, phone):
+    """Записує дані користувача в Google Sheets."""
+    logging.info("Початок запису в Google Sheets")
+    try:
+        credentials = get_google_credentials()
+        if not credentials:
+            return
+        
+        client = gspread.authorize(credentials)
+        sheet = client.open("future cybernetics from investment game").sheet1
+        
+        row = [name, phone]
+        sheet.append_row(row)
+        
+        logging.info(f"Успішно записано в Google Sheets: {row}")
+        st.success("Дані успішно надіслані!")
+    except Exception as e:
+        logging.error(f"Помилка запису в Google Sheets: {e}")
+        st.error(f"Помилка при записі в Google Sheets: {e}")
 
 def get_asset_tickers():
     return {
@@ -432,50 +481,4 @@ def main():
             "Тікер": list(assets.values()),
             "Актив": list(assets.keys()),
             "Сума": [st.session_state["investment"][asset] / 100 * total_investment for asset in assets.keys()],
-            "% вкладення": [st.session_state["investment"][asset] / 100 for asset in assets.keys()]
-        })
-        show_dataframe_with_total(user_portfolio)
         
-        if st.button("Інвестувати"):
-            st.success("Інвестиція розподілена успішно!")
-            plot_price_dynamics(historic_assets_prices, 1)
-
-            df_train_historic_prices = historic_assets_prices.iloc[:len(historic_assets_prices) // 2]
-            a_date_prices = df_train_historic_prices.iloc[-1:]
-            b_date_prices = historic_assets_prices.iloc[-1:]
-
-            df_yield = calculate_returns(a_date_prices, b_date_prices)
-            show_yield_histogram(df_yield)
-            user_yield = calculate_yield(df_yield, user_portfolio, total_investment)
-            st.subheader("Ось як себе показав твій портфель")
-            show_dataframe_with_total(user_yield)
-            
-            markowitz_portfolio = Markowitz_optimised_portfolio(df_train_historic_prices)
-            markowitz_yield = calculate_yield(df_yield, markowitz_portfolio, total_investment)
-
-            df_grok_portfolio = pd.read_csv("grok3_portfolio.csv")
-            df_forecasted_sharpe_portfolio = pd.read_csv("markowitz_portfolio_forecasted.csv")
-
-            portfolios = {
-                "ШІ Grok": df_grok_portfolio,
-                "Гравець": user_portfolio,
-                "ШІ NeuralProphet і Марковіц": df_forecasted_sharpe_portfolio,
-                "Марковіц": markowitz_portfolio
-            }
-
-
-            
-    
-            df_portfolios_comparison = analyze_multiple_portfolios(portfolios, a_date_prices, b_date_prices, total_investment)
-            
-            plot_portfolio_asset_distribution_streamlit(portfolios)
-            analyze_player_performance_with_leaderboard(df_portfolios_comparison)
-
-            st.subheader("Давай знайомитися! Залишай заявку, аби отримувати актуальну інформацію!")
-
-            # Додати кнопку для переходу до анкети
-            st.page_link("pages/1_Анкета.py", label="Заповнити анкету", icon="📝")    
-
-
-if __name__ == "__main__":
-    main()
