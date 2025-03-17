@@ -352,12 +352,18 @@ def analyze_player_performance_with_leaderboard(df_performance):
         else:
             st.info("📈 Непогано, але є куди зростати! Вступай на кафедру економіки та економічної кібернетики і дізнайся як використовувати сучасні моделі для створення оптимальних портфелів!")
 
+import streamlit as st
+import pandas as pd
+
 def show_dataframe_with_total(df):
     # Клонуємо датафрейм, щоб залишити оригінальний незмінним
     df_copy = df.copy()
 
     # Визначаємо всі числові колонки
     numeric_cols = df_copy.select_dtypes(include=['number']).columns
+
+    # Визначаємо колонки, які містять частки (значення між 0 і 1)
+    fraction_cols = [col for col in numeric_cols if df_copy[col].between(0, 1).all()]
 
     # Створюємо рядок "Всього" із сумами для числових колонок
     total_row = {col: df_copy[col].sum() for col in numeric_cols}
@@ -368,9 +374,12 @@ def show_dataframe_with_total(df):
 
     # Форматуємо числові значення
     format_dict = {col: "{:,.2f}" for col in numeric_cols}  # Двома знаками після коми
+    for col in fraction_cols:
+        format_dict[col] = "{:.2%}"  # Форматування у відсотки
 
     # Відображаємо у Streamlit
     st.dataframe(df_copy.style.format(format_dict))
+
 
 def main():
     st.title("Інтерактивна інвестиційна гра")
