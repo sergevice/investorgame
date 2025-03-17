@@ -4,3 +4,7 @@ pandas
 numpy
 matplotlib
 scipy
+gspread
+logging
+oauth2client
+regex
