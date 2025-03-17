@@ -8,6 +8,7 @@ import gspread
 import logging
 import json
 import base64
+import regex as re
 from oauth2client.service_account import ServiceAccountCredentials
 
 # Налаштування логування
@@ -426,6 +427,14 @@ def show_dataframe_with_total(df):
     # Відображаємо у Streamlit
     st.dataframe(df_copy.style.format(format_dict))
 
+def validate_name(name):
+    """Перевіряє, чи містить ім'я лише літери (будь-якою мовою)."""
+    return bool(re.fullmatch(r'^\p{L}[\p{L}\s-]*$', name))
+
+def validate_phone(phone):
+    """Перевіряє міжнародний формат номера телефону."""
+    return bool(re.fullmatch(r'^\+?[1-9]\d{1,14}$', phone))
+
 
 def main():
     st.title("Інтерактивна інвестиційна гра")
@@ -499,10 +508,20 @@ def main():
         if st.button("Інвестувати"):
 
             if name.strip() and phone.strip():
+
+                if not validate_name(name):
+                    st.warning("Ім'я повинно містити тільки літери.")
+                    st.stop()
+    
+                if not validate_phone(phone):
+                    st.warning("Номер телефону має бути у міжнародному форматі (наприклад, +380XXXXXXXXX).")
+                    st.stop()
                 send_to_google_sheets(name, phone)
             else:
                 st.warning("Будь ласка, заповніть усі поля.")
                 st.stop()
+
+            
 
             st.success("Інвестиція розподілена успішно!")
             plot_price_dynamics(historic_assets_prices, 1)
