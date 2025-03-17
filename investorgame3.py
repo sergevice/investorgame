@@ -556,6 +556,7 @@ def main():
             
             plot_portfolio_asset_distribution_streamlit(portfolios)
             analyze_player_performance_with_leaderboard(df_portfolios_comparison)
+            st.link_button("Веб-сайт кафедри економіки та економічної кібернетики", "https://ekit.nmu.org.ua/ua/")
  
 
 
